@@ -16,36 +16,29 @@ const userSchema = new Schema(
       trim: true,
       index: true,
     },
-    bio: { type: String, trim: true },
 
     password: {
       type: String,
       required: true,
     },
-    avatar: {
-      type: String, // URL for profile picture
-    },
-    publicId: {
-      type: String,
-      trim: true,
-    },
+
     resetOtp: {
       type: Number,
     },
     resetOtpExpiry: {
       type: Number,
     },
-    memories: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Memory",
-      },
-    ],
 
-    albums: [{ type: mongoose.Schema.Types.ObjectId, ref: "Album" }],
+    // 👇 Add role field here
+    role: {
+      type: String,
+      enum: ["user", "admin"],
+      default: "user", // new users will always be "user" unless changed manually
+    },
   },
   { timestamps: true }
 );
+
 const UserModel = mongoose.model("User", userSchema);
 
 module.exports = UserModel;
