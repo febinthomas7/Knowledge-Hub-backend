@@ -1,43 +1,33 @@
 const router = require("express").Router();
-const multer = require("multer");
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed"), false);
-    }
-  },
-});
+
+const { search, ask } = require("../Controllers/GeminiController");
 const {
-  uploadMemory,
-  deleteMemory,
-  getAlbums,
-  getSingleAlbum,
-  deleteAlbum,
-  editMemory,
-  editAlbum,
-  editUserProfile,
-  getMemory,
+  createTeam,
+  myTeams,
+  createDocument,
+  editDocument,
+  deleteDocument,
+  getSingleDocument,
+  inviteUser,
+  getUserActivityFeed,
+  removeMember,
+  getAiTags,
+  getAiSumary,
 } = require("../Controllers/UserController");
 
-router.post("/upload", upload.single("image"), uploadMemory);
-router.delete("/memory/:id", deleteMemory);
+router.post("/create-team", createTeam);
+router.get("/my-teams", myTeams);
+router.post("/team/:teamId/invite", inviteUser);
+router.post("/search", search);
+router.post("/ask", ask);
+router.post("/get-tags", getAiTags);
+router.post("/get-summary", getAiSumary);
 
-router.get("/albums", getAlbums);
-router.get("/memories", getMemory);
-
-router.get("/albums/:albumId", getSingleAlbum);
-
-router.delete("/album/:id", deleteAlbum);
-router.put("/memory/:id", upload.single("image"), editMemory);
-router.put("/album/:id", editAlbum);
-
-router.put("/:id", upload.single("avatar"), editUserProfile);
+router.get("/feed", getUserActivityFeed);
+router.get("/document", getSingleDocument);
+router.post("/document", createDocument);
+router.put("/document/:id", editDocument);
+router.delete("/document", deleteDocument);
+router.delete("/team/:teamId/member/:memberId", removeMember);
 
 module.exports = router;

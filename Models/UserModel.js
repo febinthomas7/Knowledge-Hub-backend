@@ -29,12 +29,7 @@ const userSchema = new Schema(
       type: Number,
     },
 
-    // 👇 Add role field here
-    role: {
-      type: String,
-      enum: ["user", "admin"],
-      default: "user", // new users will always be "user" unless changed manually
-    },
+    teams: [{ type: mongoose.Schema.Types.ObjectId, ref: "Team" }],
   },
   { timestamps: true }
 );
