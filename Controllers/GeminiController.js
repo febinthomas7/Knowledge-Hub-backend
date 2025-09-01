@@ -1,12 +1,7 @@
 const UserModel = require("../Models/UserModel");
-
 const TeamModel = require("../Models/TeamModel");
 const DocumentModel = require("../Models/DocumentModel");
-const {
-  semanticSearch,
-  askGemini,
-  generateEmbedding,
-} = require("../Services/geminiService");
+const { askGemini, generateEmbedding } = require("../Services/geminiService");
 
 const search = async (req, res) => {
   const { query, mode = "text" } = req.body; // mode can be "semantic" or "text"

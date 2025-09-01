@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// import { GoogleGenAI } from "@google/genai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 export const generateEmbedding = async (text) => {
@@ -32,31 +31,6 @@ ${content}
     .split(/[,;\n]/)
     .map((tag) => tag.trim())
     .filter(Boolean);
-};
-
-// ✅ Semantic search helper
-export const semanticSearch = async (query, documents) => {
-  const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL });
-
-  const prompt = `You are a semantic search engine.
-Given the query: "${query}"
-and these documents (with IDs):
-
-${documents
-  .map((doc) => `ID: ${doc._id}, Content: ${doc.content}`)
-  .join("\n\n")}
-
-Return ONLY the IDs of documents that are truly relevant to the query.
-If no documents are relevant, return "NONE".
-Return IDs one per line, nothing else.`;
-
-  const result = await model.generateContent(prompt);
-
-  return result.response
-    .text()
-    .split(/[\n,]/)
-    .map((id) => id.trim())
-    .filter((id) => id); // remove empty strings
 };
 
 // ✅ Q&A with context

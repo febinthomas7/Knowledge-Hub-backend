@@ -1,5 +1,4 @@
 const UserModel = require("../Models/UserModel");
-
 const TeamModel = require("../Models/TeamModel");
 const DocumentModel = require("../Models/DocumentModel");
 const {
@@ -9,7 +8,6 @@ const {
 } = require("../Services/geminiService");
 const getAiSumary = async (req, res) => {
   const { title, content } = req.body;
-  console.log(title);
   const summary = await generateSummary(title, content);
 
   try {
