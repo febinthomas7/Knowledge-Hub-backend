@@ -1,10 +1,9 @@
 const UserModel = require("../Models/UserModel");
-const TeamModel = require("../Models/TeamModel");
 const DocumentModel = require("../Models/DocumentModel");
 const { askGemini, generateEmbedding } = require("../Services/geminiService");
 
 const search = async (req, res) => {
-  const { query, mode = "text" } = req.body; // mode can be "semantic" or "text"
+  const { query, mode = "text" } = req.body; // "text" | "semantic"
   const { userId } = req.query;
 
   try {
@@ -20,74 +19,79 @@ const search = async (req, res) => {
 
     const teamIds = user.teams.map((t) => t._id);
 
-    let docs = [];
+    let results = [];
 
     if (mode === "text") {
-      // ✅ Regular text filter
-      docs = await DocumentModel.find({
-        team: { $in: teamIds },
-        $or: [
-          { title: new RegExp(query, "i") },
-          { content: new RegExp(query, "i") },
-          { tags: { $in: [query] } },
-        ],
-      })
-        .populate("createdBy", "name email role")
-        .populate("updatedBy", "name email role")
-        .populate("versions.editedBy", "name email role");
+      // ✅ Full-text search using Atlas Search
+      results = await DocumentModel.aggregate([
+        {
+          $search: {
+            text: {
+              query,
+              path: ["title", "content", "tags"], // search across multiple fields
+              fuzzy: { maxEdits: 1 }, // typo tolerance
+            },
+          },
+        },
+        { $match: { team: { $in: teamIds } } }, // only user's teams
+
+        { $limit: 10 },
+        {
+          $project: {
+            title: 1,
+            content: 1,
+            summary: 1,
+            tags: 1,
+            team: 1,
+            createdBy: 1,
+            createdByRole: 1,
+            updatedBy: 1,
+            versions: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            score: { $meta: "searchScore" },
+          },
+        },
+      ]);
     } else {
-      // ✅ Semantic search with threshold
+      // ✅ Semantic search using vector embeddings
       const queryVector = await generateEmbedding(query);
 
-      const allDocs = await DocumentModel.find({ team: { $in: teamIds } })
-        .populate("createdBy", "name email role")
-        .populate("updatedBy", "name email role")
-        .populate("versions.editedBy", "name email role");
+      results = await DocumentModel.aggregate([
+        {
+          $search: {
+            knnBeta: {
+              vector: queryVector,
+              path: "embedding",
+              k: 5, // return top 5
+            },
+          },
+        },
+        { $match: { team: { $in: teamIds } } }, // restrict to teams
 
-      const scoredDocs = allDocs
-        .map((doc) => {
-          if (!doc.embedding || doc.embedding.length === 0) return null;
+        { $limit: 5 },
+        {
+          $project: {
+            title: 1,
+            content: 1,
+            summary: 1,
+            tags: 1,
+            team: 1,
 
-          const score = cosineSimilarity(queryVector, doc.embedding);
-          return { doc, score };
-        })
-        .filter(Boolean);
-
-      if (!scoredDocs.length) {
-        return res.json({ results: [] });
-      }
-
-      // Sort by highest similarity
-      scoredDocs.sort((a, b) => b.score - a.score);
-
-      const bestMatch = scoredDocs[0];
-
-      // ✅ Apply threshold (e.g., 0.7)
-      const SIMILARITY_THRESHOLD = 0.5;
-
-      if (bestMatch.score < SIMILARITY_THRESHOLD) {
-        return res.json({ results: [] }); // no good match
-      }
-
-      res.json({ results: [bestMatch.doc] });
+            createdBy: 1,
+            createdByRole: 1,
+            updatedBy: 1,
+            versions: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            score: { $meta: "searchScore" }, // similarity score
+          },
+        },
+        {
+          $match: { score: { $gte: 0.7 } }, // keep only relevant ones
+        },
+      ]);
     }
-
-    // Normalize output
-    const results = docs.map((doc) => ({
-      _id: doc._id,
-      team: doc.team,
-      title: doc.title,
-      content: doc.content,
-      summary: doc.summary,
-      tags: doc.tags,
-      createdBy: doc.createdBy,
-      createdByRole: doc.createdByRole,
-      updatedBy: doc.updatedBy,
-      versions: doc.versions,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
-      __v: doc.__v,
-    }));
 
     res.json({ results });
   } catch (err) {
@@ -95,14 +99,6 @@ const search = async (req, res) => {
     res.status(500).json({ error: "Search failed" });
   }
 };
-
-// Utility: cosine similarity
-function cosineSimilarity(vecA, vecB) {
-  const dot = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-  const normA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-  const normB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-  return dot / (normA * normB);
-}
 
 const ask = async (req, res) => {
   const { question } = req.body;
@@ -129,7 +125,6 @@ const ask = async (req, res) => {
       return res.json({ results: [] });
     }
 
-    // 3. Run semantic search
     const result = await askGemini(question, docs);
 
     res.json({ result });
