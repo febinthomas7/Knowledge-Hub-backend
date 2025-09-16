@@ -490,6 +490,9 @@ const getToken = async (req, res) => {
           id: userId,
           name: name,
         },
+        customization: {
+          forcesave: true, // ✅ Enable force save
+        },
       },
     };
 
