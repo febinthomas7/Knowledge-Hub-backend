@@ -21,7 +21,7 @@ const userSchema = new Schema(
       type: String,
       required: true,
     },
-
+    docs: [{ type: Schema.Types.ObjectId, ref: "doc" }],
     resetOtp: {
       type: Number,
     },

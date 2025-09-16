@@ -1,11 +1,19 @@
 const UserModel = require("../Models/UserModel");
 const TeamModel = require("../Models/TeamModel");
+const { Readable } = require("stream");
 const DocumentModel = require("../Models/DocumentModel");
+const mongoose = require("mongoose");
+
+const { getBucket } = require("../Models/db");
+const jwt = require("jsonwebtoken");
+
 const {
   generateSummary,
   generateTags,
   generateEmbedding,
+  genAI,
 } = require("../Services/geminiService");
+const DocModel = require("../Models/DocModel");
 const getAiSumary = async (req, res) => {
   const { title, content } = req.body;
   const summary = await generateSummary(title, content);
@@ -33,6 +41,49 @@ const getAiTags = async (req, res) => {
   } catch (error) {
     console.error("Error creating document:", error);
     res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const Upload = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    const bucket = getBucket();
+    if (!bucket)
+      return res.status(500).json({ error: "GridFS not initialized yet" });
+
+    const readableStream = Readable.from(req.file.buffer);
+    const uploadStream = bucket.openUploadStream(req.file.originalname);
+    const mime = req.file.mimetype; // e.g. 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+    // Extract short type
+    let fileType = "";
+    if (mime.startsWith("application/pdf")) fileType = "pdf";
+    else if (mime.includes("wordprocessingml")) fileType = "docx";
+    else if (mime.includes("spreadsheetml")) fileType = "xlsx";
+    else if (mime.includes("presentationml")) fileType = "pptx";
+    else fileType = mime.split("/")[1];
+    readableStream
+      .pipe(uploadStream)
+      .on("error", (err) => res.status(500).json({ error: err.message }))
+      .on("finish", async () => {
+        const newDoc = new DocModel({
+          filename: req.file.originalname,
+          gridfsId: uploadStream.id,
+          uploadedBy: req.body.userId,
+          fileType,
+        });
+
+        await newDoc.save();
+
+        await UserModel.findByIdAndUpdate(req.body.userId, {
+          $push: { docs: newDoc._id },
+        });
+        res.json({ message: "File uploaded + metadata saved", doc: newDoc });
+      });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Upload failed" });
   }
 };
 
@@ -419,16 +470,183 @@ const removeMember = async (req, res) => {
   }
 };
 
+const getToken = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { name, userId, gridId, type } = req.query;
+
+    // Build OnlyOffice config
+    const config = {
+      document: {
+        fileType: type,
+        title: fileId,
+        url: `${process.env.SERVER_URL}/api/user/gridfs/${gridId}`, // served from frontend public folder
+        key: gridId + "-" + Date.now(), // unique identifier per file
+      },
+      editorConfig: {
+        mode: "edit",
+        callbackUrl: `${process.env.SERVER_URL}/api/user/save/${gridId}?type=${type}`,
+        user: {
+          id: userId,
+          name: name,
+        },
+      },
+    };
+
+    // Sign config with JWT secret
+    const token = jwt.sign(config, process.env.DOCUMENT_SERVER_SECRET);
+
+    res.json({ config, token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error generating token" });
+  }
+};
+
+const getFiles = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    console.log(fileId);
+    const bucket = getBucket();
+    let objectId;
+    try {
+      objectId = new mongoose.Types.ObjectId(fileId);
+    } catch (e) {
+      return res.status(400).send("Invalid fileId format");
+    }
+    const stream = bucket.openDownloadStream(objectId);
+
+    stream.on("file", (file) => {
+      res.set({
+        "Content-Type": file.contentType || "application/octet-stream",
+        "Content-Disposition": `inline; filename="${file.filename}"`,
+      });
+    });
+
+    stream.on("error", () => res.status(404).send("File not found"));
+    stream.pipe(res);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error fetching file");
+  }
+};
+
+const saveFile = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { type } = req.query;
+
+    const status = req.body.status;
+
+    // OnlyOffice: 2 = "document is ready to be saved"
+    if (status === 2) {
+      const downloadUrl = req.body.url;
+
+      // Download the updated file
+      const response = await fetch(downloadUrl);
+      const buffer = await response.arrayBuffer();
+
+      const bucket = getBucket();
+      if (!bucket) {
+        return res.json({ error: 1 }); // GridFS not ready
+      }
+
+      // Delete old version (optional if you want overwrite)
+      try {
+        await bucket.delete(new mongoose.Types.ObjectId(fileId));
+      } catch (err) {
+        console.warn("⚠️ File not found for delete, continuing...");
+      }
+
+      // Upload updated version with same ID
+      const readableStream = Readable.from(Buffer.from(buffer));
+      const uploadStream = bucket.openUploadStreamWithId(
+        new mongoose.Types.ObjectId(fileId),
+        `updated.${type}`
+      );
+
+      readableStream.pipe(uploadStream);
+
+      uploadStream.on("finish", () => {
+        console.log("✅ File updated in GridFS");
+        res.json({ error: 0 }); // MUST send this
+      });
+
+      uploadStream.on("error", (err) => {
+        console.error("❌ Error saving file:", err);
+        res.json({ error: 1 });
+      });
+    } else {
+      // For other statuses (like editing in progress), just ACK
+      res.json({ error: 0 });
+    }
+  } catch (err) {
+    console.error("❌ Save callback failed:", err);
+    res.json({ error: 1 });
+  }
+};
+
+const deleteDocFile = async (req, res) => {
+  try {
+    const { fileId } = req.params; // GridFS ID
+
+    const bucket = getBucket();
+    if (!bucket) return res.status(500).json({ error: "GridFS not ready" });
+
+    // Delete from GridFS
+    await bucket.delete(new mongoose.Types.ObjectId(fileId));
+
+    // Find doc metadata
+    const doc = await DocModel.findOne({ gridfsId: fileId });
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+
+    // Remove ref from user model
+    await UserModel.findByIdAndUpdate(doc.uploadedBy, {
+      $pull: { docs: doc._id }, // assuming user model has `docs: [ObjectId]`
+    });
+
+    // Delete metadata from MongoDB
+    await DocModel.findOneAndDelete({ gridfsId: fileId });
+
+    res.json({ message: "File deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Delete failed" });
+  }
+};
+
+const getUserDocs = async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    const user = await UserModel.findById(userId).populate("docs"); // populate doc references
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    res.json(user.docs); // return only docs, or send full user if needed
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch user docs" });
+  }
+};
+
 module.exports = {
+  deleteDocFile,
+  saveFile,
+  getFiles,
+  getToken,
   createTeam,
   myTeams,
   createDocument,
   editDocument,
   deleteDocument,
   getSingleDocument,
+  Upload,
   inviteUser,
   getUserActivityFeed,
   removeMember,
   getAiSumary,
   getAiTags,
+  getUserDocs,
+  getUserDocs,
 };
