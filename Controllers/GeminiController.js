@@ -34,6 +34,18 @@ const search = async (req, res) => {
           },
         },
         { $match: { team: { $in: teamIds } } }, // only user's teams
+        // Populate updatedBy
+        {
+          $lookup: {
+            from: "users", // the collection name for users
+            localField: "updatedBy", // field in documents
+            foreignField: "_id", // field in users
+            as: "updatedBy", // result will be an array
+          },
+        },
+        {
+          $unwind: "$updatedBy", // convert array to object
+        },
 
         { $limit: 10 },
         {
@@ -44,7 +56,6 @@ const search = async (req, res) => {
             tags: 1,
             team: 1,
             createdBy: 1,
-            createdByRole: 1,
             updatedBy: 1,
             versions: 1,
             createdAt: 1,
@@ -59,17 +70,32 @@ const search = async (req, res) => {
 
       results = await DocumentModel.aggregate([
         {
-          $search: {
-            knnBeta: {
-              vector: queryVector,
-              path: "embedding",
-              k: 5, // return top 5
-            },
+          $vectorSearch: {
+            index: "vector",
+            path: "embedding",
+            queryVector,
+            k: 5,
+            numCandidates: 100,
+            similarity: "cosine",
+            limit: 5,
           },
         },
-        { $match: { team: { $in: teamIds } } }, // restrict to teams
 
-        { $limit: 5 },
+        // Filter by team
+        { $match: { team: { $in: teamIds } } },
+
+        // Populate updatedBy
+        {
+          $lookup: {
+            from: "users", // the collection name for users
+            localField: "updatedBy", // field in documents
+            foreignField: "_id", // field in users
+            as: "updatedBy", // result will be an array
+          },
+        },
+        {
+          $unwind: "$updatedBy", // convert array to object
+        },
         {
           $project: {
             title: 1,
@@ -77,18 +103,13 @@ const search = async (req, res) => {
             summary: 1,
             tags: 1,
             team: 1,
-
             createdBy: 1,
-            createdByRole: 1,
             updatedBy: 1,
             versions: 1,
             createdAt: 1,
             updatedAt: 1,
-            score: { $meta: "searchScore" }, // similarity score
+            score: 1, // no $meta here
           },
-        },
-        {
-          $match: { score: { $gte: 0.7 } }, // keep only relevant ones
         },
       ]);
     }

@@ -90,7 +90,7 @@ const Upload = async (req, res) => {
 const createDocument = async (req, res) => {
   try {
     const { title, content } = req.body;
-    const { team, userId } = req.query;
+    const { team, userId, role } = req.query;
 
     if (!team || !title || !content) {
       return res
@@ -112,12 +112,31 @@ const createDocument = async (req, res) => {
         .json({ message: "User is not a member of this team" });
     }
 
-    const role = member.role;
-
     // ✅ Auto-generate summary & tags using Gemini
     const summary = await generateSummary(title, content);
     const tags = await generateTags(content);
     const embedding = await generateEmbedding(content);
+
+    // Build permissions
+    const permissions = [];
+
+    // 1. Add all team admins
+    teamDoc.members.forEach((m) => {
+      if (m.role === "admin") {
+        permissions.push({
+          userId: m.user._id,
+          access: "admin",
+        });
+      }
+    });
+
+    // 2. Always add creator as admin (if not already in the array)
+    if (!permissions.some((p) => p.userId.toString() === userId)) {
+      permissions.push({
+        userId,
+        access: role,
+      });
+    }
 
     const newDocument = new DocumentModel({
       team,
@@ -127,14 +146,14 @@ const createDocument = async (req, res) => {
       embedding,
       tags,
       createdBy: userId,
-      createdByRole: role,
       updatedBy: userId,
       versions: [
         {
-          content,
+          title,
           editedBy: userId,
         },
       ],
+      permissions,
     });
 
     await newDocument.save();
@@ -178,10 +197,25 @@ const editDocument = async (req, res) => {
     }
 
     // 3. Permission check
-    const isAdmin = member.role === "admin";
-    const isOwner = document.createdBy.toString() === userId.toString();
+    // const isAdmin = member.role === "admin";
+    // const isOwner = document.createdBy.toString() === userId.toString();
 
-    if (!isAdmin && !isOwner) {
+    // if (!isAdmin && !isOwner) {
+    //   return res
+    //     .status(403)
+    //     .json({ message: "You don't have permission to edit this document" });
+    // }
+
+    // ✅ Permission check using permissions array
+    const perm = document.permissions.find(
+      (p) => p.userId.toString() === userId.toString()
+    );
+    if (
+      !perm ||
+      (perm.access !== "owner" &&
+        perm.access !== "editor" &&
+        member.role !== "admin")
+    ) {
       return res
         .status(403)
         .json({ message: "You don't have permission to edit this document" });
@@ -237,16 +271,20 @@ const editDocument = async (req, res) => {
 const deleteDocument = async (req, res) => {
   try {
     const { docId, userId } = req.query;
-    console.log(docId, userId);
     const doc = await DocumentModel.findById(docId);
     if (!doc) {
       return res.status(404).json({ message: "Document not found" });
     }
 
-    // Allow delete if admin OR creator of doc
-    // if (doc.createdBy.toString() !== userId && !req.user.isAdmin) {
-    //   return res.status(403).json({ message: "Not authorized to delete this document" });
-    // }
+    // ✅ Check permissions
+    const perm = doc.permissions.find(
+      (p) => p.userId.toString() === userId.toString()
+    );
+    if (!perm) {
+      return res
+        .status(403)
+        .json({ message: "You don't have permission to delete this document" });
+    }
 
     await TeamModel.findByIdAndUpdate(doc.team, {
       $pull: { documents: docId },
@@ -301,7 +339,7 @@ const myTeams = async (req, res) => {
           {
             path: "documents", // 👈 populate docs inside team
             select:
-              "title createdByRole content summary versions tags createdAt createdBy updatedBy",
+              "title permissions content summary versions tags createdAt createdBy updatedBy",
             populate: [
               { path: "createdBy", select: "name email" },
               { path: "updatedBy", select: "name email" },
@@ -354,7 +392,6 @@ const inviteUser = async (req, res) => {
   try {
     const { teamId } = req.params;
     const { email } = req.body;
-    console.log(email, teamId);
     // find user by email
     const user = await UserModel.findOne({ email });
     if (!user) {
