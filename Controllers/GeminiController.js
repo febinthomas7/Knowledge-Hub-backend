@@ -21,98 +21,7 @@ const search = async (req, res) => {
 
     let results = [];
 
-    if (mode === "text") {
-      // ✅ Full-text search using Atlas Search
-      results = await DocumentModel.aggregate([
-        {
-          $search: {
-            text: {
-              query,
-              path: ["title", "content", "tags"], // search across multiple fields
-              fuzzy: { maxEdits: 1 }, // typo tolerance
-            },
-          },
-        },
-        { $match: { team: { $in: teamIds } } }, // only user's teams
-        // Populate updatedBy
-        {
-          $lookup: {
-            from: "users", // the collection name for users
-            localField: "updatedBy", // field in documents
-            foreignField: "_id", // field in users
-            as: "updatedBy", // result will be an array
-          },
-        },
-        {
-          $unwind: "$updatedBy", // convert array to object
-        },
-
-        { $limit: 10 },
-        {
-          $project: {
-            title: 1,
-            content: 1,
-            summary: 1,
-            tags: 1,
-            team: 1,
-            createdBy: 1,
-            updatedBy: 1,
-            versions: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            score: { $meta: "searchScore" },
-          },
-        },
-      ]);
-    } else {
-      // ✅ Semantic search using vector embeddings
-      const queryVector = await generateEmbedding(query);
-
-      results = await DocumentModel.aggregate([
-        {
-          $vectorSearch: {
-            index: "vector",
-            path: "embedding",
-            queryVector,
-            k: 5,
-            numCandidates: 100,
-            similarity: "cosine",
-            limit: 5,
-          },
-        },
-
-        // Filter by team
-        { $match: { team: { $in: teamIds } } },
-
-        // Populate updatedBy
-        {
-          $lookup: {
-            from: "users", // the collection name for users
-            localField: "updatedBy", // field in documents
-            foreignField: "_id", // field in users
-            as: "updatedBy", // result will be an array
-          },
-        },
-        {
-          $unwind: "$updatedBy", // convert array to object
-        },
-        {
-          $project: {
-            title: 1,
-            content: 1,
-            summary: 1,
-            tags: 1,
-            team: 1,
-            createdBy: 1,
-            updatedBy: 1,
-            versions: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            score: 1, // no $meta here
-          },
-        },
-      ]);
-    }
+    results = await searchDocuments({ query, teamIds, mode });
 
     res.json({ results });
   } catch (err) {
@@ -120,6 +29,132 @@ const search = async (req, res) => {
     res.status(500).json({ error: "Search failed" });
   }
 };
+
+async function searchDocuments({ query, teamIds, mode }) {
+  console.log("Search mode:", mode);
+  const basePipeline = [
+    { $match: { team: { $in: teamIds } } },
+
+    // Populate updatedBy
+    {
+      $lookup: {
+        from: "users",
+        localField: "updatedBy",
+        foreignField: "_id",
+        as: "updatedBy",
+      },
+    },
+    { $unwind: { path: "$updatedBy", preserveNullAndEmptyArrays: true } },
+
+    // Unwind versions to populate editedBy
+    { $unwind: { path: "$versions", preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "versions.editedBy",
+        foreignField: "_id",
+        as: "versions.editedBy",
+      },
+    },
+    {
+      $unwind: { path: "$versions.editedBy", preserveNullAndEmptyArrays: true },
+    },
+
+    // Group back to array
+    {
+      $group: {
+        _id: "$_id",
+        title: { $first: "$title" },
+        content: { $first: "$content" },
+        summary: { $first: "$summary" },
+        tags: { $first: "$tags" },
+        team: { $first: "$team" },
+        createdBy: { $first: "$createdBy" },
+        updatedBy: { $first: "$updatedBy" },
+        createdAt: { $first: "$createdAt" },
+        updatedAt: { $first: "$updatedAt" },
+        score: { $first: { $ifNull: ["$score", 0] } }, // ✅ safe fallback
+        permissions: { $first: "$permissions" },
+        versions: { $push: "$versions" },
+      },
+    },
+
+    { $limit: 10 },
+  ];
+
+  if (mode === "text") {
+    // Add Atlas Search text stage at the beginning
+    console.log("Text search mode");
+    basePipeline.unshift({
+      $search: {
+        text: {
+          query,
+          path: ["title", "content", "tags"],
+          fuzzy: { maxEdits: 1 },
+        },
+      },
+    });
+
+    // Add score metadata in project
+    basePipeline.push({
+      $project: {
+        title: 1,
+        content: 1,
+        summary: 1,
+        tags: 1,
+        team: 1,
+        createdBy: 1,
+        updatedBy: 1,
+        versions: 1,
+        createdAt: 1,
+        permissions: 1,
+        updatedAt: 1,
+        score: { $meta: "searchScore" },
+      },
+    });
+  } else if (mode === "semantic") {
+    console.log("Vector search mode");
+    // Generate embedding outside this function
+    const queryVector = await generateEmbedding(query);
+
+    basePipeline.unshift({
+      $vectorSearch: {
+        index: "vector",
+        path: "embedding",
+        queryVector,
+        k: 10,
+        numCandidates: 100,
+        similarity: "cosine",
+        limit: 5,
+      },
+    });
+
+    // Project for vector search
+    basePipeline.push(
+      {
+        $project: {
+          title: 1,
+          content: 1,
+          summary: 1,
+          tags: 1,
+          team: 1,
+          createdBy: 1,
+          updatedBy: 1,
+          versions: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          permissions: 1,
+          score: { $meta: "vectorSearchScore" },
+        },
+      }
+      // {
+      //   $match: { score: { $lt: 0 } }, // filter out irrelevant results
+      // }
+    );
+  }
+
+  return await DocumentModel.aggregate(basePipeline);
+}
 
 const ask = async (req, res) => {
   const { question } = req.body;

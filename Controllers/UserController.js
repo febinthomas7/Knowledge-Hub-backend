@@ -446,11 +446,15 @@ const getUserActivityFeed = async (req, res) => {
 
     const teamIds = user.teams.map((team) => team._id);
 
-    const activities = await DocumentModel.find({ team: { $in: teamIds } })
+    const activities = await DocumentModel.find(
+      { team: { $in: teamIds } },
+      "-embedding"
+    )
       .sort({ updatedAt: -1 })
       .limit(5)
       .populate("team", "name")
-      .populate("updatedBy", "name email");
+      .populate("updatedBy", "name email")
+      .populate("versions.editedBy", "name ");
 
     res.json(activities);
   } catch (err) {
