@@ -11,6 +11,7 @@ const ensureAuthentication = (req, res, next) => {
     req.user = decoded;
     next();
   } catch (error) {
+    console.log("error zone");
     return res
       .status(403)
       .json({ message: "Invalid JWT token or expired token", success: false });

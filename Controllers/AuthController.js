@@ -177,7 +177,7 @@ const login = async (req, res) => {
       { email: user.email, _id: user._id },
       process.env.JWT_SECRET,
       {
-        expiresIn: "1d",
+        expiresIn: "10s",
       }
     );
 
@@ -188,8 +188,6 @@ const login = async (req, res) => {
       email,
       name: user.name,
       _id: user._id,
-      dp: user.dp,
-      bio: user.bio,
     });
   } catch (error) {
     res.status(500).json({ message: "Internal server error", sucess: false });

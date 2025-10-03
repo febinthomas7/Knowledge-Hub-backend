@@ -22,27 +22,32 @@ const {
   saveFile,
   deleteDocFile,
 } = require("../Controllers/UserController");
+const ensureAuthentication = require("../Middlewares/Auth");
 
-router.post("/create-team", createTeam);
-router.get("/my-teams", myTeams);
-router.post("/team/:teamId/invite", inviteUser);
-router.post("/search", search);
-router.post("/ask", ask);
-router.post("/get-tags", getAiTags);
-router.post("/get-summary", getAiSumary);
-router.post("/doc-upload", upload.single("file"), Upload);
+router.post("/create-team", ensureAuthentication, createTeam);
+router.get("/my-teams", ensureAuthentication, myTeams);
+router.post("/team/:teamId/invite", ensureAuthentication, inviteUser);
+router.post("/search", ensureAuthentication, search);
+router.post("/ask", ensureAuthentication, ask);
+router.post("/get-tags", ensureAuthentication, getAiTags);
+router.post("/get-summary", ensureAuthentication, getAiSumary);
+router.post("/doc-upload", upload.single("file"), ensureAuthentication, Upload);
 
-router.get("/feed", getUserActivityFeed);
-router.get("/get-token/:fileId", getToken);
-router.get("/docs", getUserDocs);
-router.get("/gridfs/:fileId", getFiles);
-router.post("/save/:fileId", saveFile);
+router.get("/feed", ensureAuthentication, getUserActivityFeed);
+router.get("/get-token/:fileId", ensureAuthentication, getToken);
+router.get("/docs", ensureAuthentication, getUserDocs);
+router.get("/gridfs/:fileId", ensureAuthentication, getFiles);
+router.post("/save/:fileId", ensureAuthentication, saveFile);
 router.delete("/delete/:fileId", deleteDocFile);
 
-router.get("/document", getSingleDocument);
-router.post("/document", createDocument);
-router.put("/document/:id", editDocument);
-router.delete("/document", deleteDocument);
-router.delete("/team/:teamId/member/:memberId", removeMember);
+router.get("/document", ensureAuthentication, getSingleDocument);
+router.post("/document", ensureAuthentication, createDocument);
+router.put("/document/:id", ensureAuthentication, editDocument);
+router.delete("/document", ensureAuthentication, deleteDocument);
+router.delete(
+  "/team/:teamId/member/:memberId",
+  ensureAuthentication,
+  removeMember
+);
 
 module.exports = router;

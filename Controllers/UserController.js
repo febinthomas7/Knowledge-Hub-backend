@@ -89,7 +89,7 @@ const Upload = async (req, res) => {
 
 const createDocument = async (req, res) => {
   try {
-    const { title, content } = req.body;
+    const { title, content } = req.body.formData;
     const { team, userId, role } = req.query;
 
     if (!team || !title || !content) {
@@ -174,7 +174,7 @@ const createDocument = async (req, res) => {
 
 const editDocument = async (req, res) => {
   try {
-    const { title, content, summary, tags } = req.body;
+    const { title, content, summary, tags } = req.body.formData;
     const { id } = req.params;
     const { userId } = req.query;
 
