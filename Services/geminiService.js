@@ -1,11 +1,19 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-export const generateEmbedding = async (text) => {
-  const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-  const result = await model.embedContent(text);
 
-  return result.embedding.values; // Float32Array
+export const generateEmbedding = async (text) => {
+  // Update the model string here
+  const model = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+
+  // Use the new taskType parameter for better accuracy
+  const result = await model.embedContent({
+    content: { parts: [{ text }] },
+    taskType: "RETRIEVAL_QUERY", // or "RETRIEVAL_DOCUMENT" for your DB items
+    outputDimensionality: 768, // Optional: Reduces storage costs with minimal loss
+  });
+
+  return result.embedding.values;
 };
 // ✅ Generate summary
 export const generateSummary = async (title, content) => {
@@ -42,7 +50,7 @@ export const askGemini = async (question, documents) => {
   const context = documents
     .map(
       (doc, i) =>
-        `Document ${i + 1}:\nTitle: ${doc.title}\nContent: ${doc.content}`
+        `Document ${i + 1}:\nTitle: ${doc.title}\nContent: ${doc.content}`,
     )
     .join("\n\n");
 
